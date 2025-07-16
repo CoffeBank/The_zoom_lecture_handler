@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from skimage.metrics import structural_similarity as compare_ssim
-from moviepy.editor import *
+from moviepy import VideoFileClip, concatenate_videoclips
 import sys
 
 def seconds_to_minutes(seconds):
@@ -28,7 +28,7 @@ else:
 video_capture = cv2.VideoCapture(video_name)
 video_movie = VideoFileClip(video_name)
 rate = int(round(video_movie.fps , 0))
-frame_len = video_movie.reader.nframes
+frame_len = video_movie.reader.n_frames
 seconds_in_video = frame_len/rate
  
 print("Видео: " + video_name)
@@ -98,7 +98,7 @@ full_subclips = []
 modified_list = list(zip(subclips[::2], subclips[1::2]))
 for start, end in modified_list:
     #print(start, end)
-    full_subclips.append(video_movie.subclip(start, end))
+    full_subclips.append(video_movie.subclipped(start, end))
 
 if len(empty_list) % 2 != 0:
     empty_list.append(round(seconds_in_video , 0))
