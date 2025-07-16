@@ -1,8 +1,9 @@
+import argparse
+import sys
+
 import cv2
-import numpy as np
 from skimage.metrics import structural_similarity as compare_ssim
 from moviepy import VideoFileClip, concatenate_videoclips
-import sys
 
 def seconds_to_minutes(seconds):
     minutes = seconds // 60
@@ -18,11 +19,25 @@ def format_pairs(lst):
             pairs.append(str(lst[i]))
     return ", ".join(pairs)
 
-if len(sys.argv) >= 3:
-    video_name = sys.argv[1]
-    final_name = sys.argv[2]
-else:
-    print("Недостаточно аргументов командной строки. Пожалуйста, укажите имена файлов")
+parser = argparse.ArgumentParser(description="Process Zoom lecture video")
+parser.add_argument("video", help="Input video file")
+parser.add_argument("output", help="Output video file")
+parser.add_argument(
+    "--use-cuda",
+    action="store_true",
+    help="Enable CUDA acceleration if available",
+)
+args = parser.parse_args()
+
+video_name = args.video
+final_name = args.output
+
+use_cuda = False
+if args.use_cuda:
+    if hasattr(cv2, "cuda") and cv2.cuda.getCudaEnabledDeviceCount() > 0:
+        use_cuda = True
+    else:
+        print("CUDA requested but no compatible device found. Falling back to CPU.")
 
 #video_name = "Short1.mp4"
 video_capture = cv2.VideoCapture(video_name)
@@ -35,12 +50,16 @@ print("Видео: " + video_name)
 print("FPS: " + str(rate))
 print("Продолжительность: " + str(seconds_to_minutes(seconds_in_video)))
 
-image1 = cv2.imread('ex1.png')
+image1 = cv2.imread("ex1.png")
 
 frame_num = 0
-empty_num = 0
 empty_flag = False
 empty_list = []
+
+if use_cuda:
+    template_gpu = cv2.cuda_GpuMat()
+    template_gpu.upload(cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY))
+    matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
 while video_capture.isOpened():
     # Захват кадра из видео
     ret, frame = video_capture.read()
@@ -51,25 +70,29 @@ while video_capture.isOpened():
 
     # Считываем кадр только раз в секунду
     if frame_num % rate == 0:
-
-        # upload resized frame to GPU
-        #gpu_frame_1 = cv2.cuda_GpuMat()
-        #gpu_frame_2 = cv2.cuda_GpuMat()
-        #gpu_frame_1.upload(frame)
-        #gpu_frame_2.upload(resized_gray1)
-
-        gray1 = cv2.cvtColor(resized_gray1, cv2.COLOR_BGR2GRAY)
-        gray2 = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        ssim_index = compare_ssim(gray1, gray2)
-        if (ssim_index > 0.7):
-            if(not empty_flag):
-                empty_flag = True
-                empty_list.append(frame_num/rate)
+        if use_cuda:
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(frame)
+            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
+            template_gpu.upload(cv2.cvtColor(resized_gray1, cv2.COLOR_BGR2GRAY))
+            res = matcher.match(gray_gpu, template_gpu)
+            result = res.download()
+            _ , max_val, _ , _ = cv2.minMaxLoc(result)
+            is_empty = max_val > 0.7
         else:
-            if(empty_flag):
+            gray1 = cv2.cvtColor(resized_gray1, cv2.COLOR_BGR2GRAY)
+            gray2 = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            ssim_index = compare_ssim(gray1, gray2)
+            is_empty = ssim_index > 0.7
+
+        if is_empty:
+            if not empty_flag:
+                empty_flag = True
+                empty_list.append(frame_num / rate)
+        else:
+            if empty_flag:
                 empty_flag = False
-                empty_list.append(frame_num/rate)
+                empty_list.append(frame_num / rate)
 
         percentage = (frame_num / frame_len) * 100
         sys.stdout.write(f"\rПрогресс анализа видео: {percentage:.2f}%")
